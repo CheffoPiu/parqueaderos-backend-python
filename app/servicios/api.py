@@ -80,3 +80,44 @@ def clientes_probables():
 @app.get("/ocupacion-real")
 def ocupacion_real():
     return obtener_ocupacion_actual_simulada()
+
+
+@app.get("/clientes-segmentados")
+def clientes_segmentados():
+    df = preparar_dataset_facturas()
+
+    from sklearn.cluster import KMeans
+    from sklearn.preprocessing import StandardScaler
+
+    # Datos de entrada para clustering
+    X = df[["frecuencia", "recencia", "monto_total"]]
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Clustering
+    kmeans = KMeans(n_clusters=3, random_state=42)
+    df["grupo"] = kmeans.fit_predict(X_scaled)
+
+    # Agregación por grupo
+    resumen = df.groupby("grupo").agg(
+        cantidad=("clienteId", "count"),
+        frecuencia_promedio=("frecuencia", "mean"),
+        recencia_promedio=("recencia", "mean"),
+        monto_promedio=("monto_total", "mean")
+    ).reset_index()
+
+    # Etiquetas simples
+    def etiquetar(row):
+        if row["frecuencia_promedio"] > 5 and row["recencia_promedio"] < 30:
+            return "Fieles"
+        elif row["recencia_promedio"] > 100:
+            return "Inactivos"
+        else:
+            return "Ocasionales"
+
+    resumen["etiqueta"] = resumen.apply(etiquetar, axis=1)
+
+    # Redondear valores
+    resumen = resumen.round(2)
+
+    return resumen.to_dict(orient="records")

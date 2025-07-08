@@ -1,0 +1,24 @@
+# Entornos virtuales
+venv/
+.env
+
+# Archivos de Python compilados
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Configuración de VSCode
+.vscode/
+
+# Archivos temporales
+*.log
+*.tmp
+.DS_Store
+
+# Notebooks temporales (si usas Jupyter más adelante)
+*.ipynb_checkpoints
+
+# Datos locales
+data/*.csv
+!data/README.md  # opcional si quieres dejar una referencia

@@ -4,8 +4,12 @@ from typing import List, Dict
 
 # Capacidad estimada por parqueadero
 CAPACIDAD_ESTIMADA = {
-    "fdb74430-6fbd-4723-9ae0-4d0f1c887d6e": 7,
-    "930c47ee-6ad2-4f9f-b91c-976920a1fb14": 3,
+    "fdb74430-6fbd-4723-9ae0-4d0f1c887d6e": 37,
+    "930c47ee-6ad2-4f9f-b91c-976920a1fb14": 43,
+    "aa5b0034-5d85-4dec-8bcf-1009c7ee920f": 55,
+    "c986e28c-e0af-4c05-8202-71e0972e0c31": 44,
+    "0eb9fdd1-e7eb-4318-8b37-472a6fbbe22e": 26,
+    "39e782ab-5a67-4945-8258-44aa7b96d460": 18,
 }
 
 # Día base para simular como si fuera hoy

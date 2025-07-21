@@ -1,46 +1,92 @@
+import os
+import json
 import pandas as pd
 from datetime import datetime
 from typing import List, Dict
+from dotenv import load_dotenv
+import boto3
+from boto3.dynamodb.conditions import Attr
+from boto3.session import Session
 
-# Capacidad estimada por parqueadero
-CAPACIDAD_ESTIMADA = {
-    "fdb74430-6fbd-4723-9ae0-4d0f1c887d6e": 37,
-    "930c47ee-6ad2-4f9f-b91c-976920a1fb14": 43,
-    "aa5b0034-5d85-4dec-8bcf-1009c7ee920f": 55,
-    "c986e28c-e0af-4c05-8202-71e0972e0c31": 44,
-    "0eb9fdd1-e7eb-4318-8b37-472a6fbbe22e": 26,
-    "39e782ab-5a67-4945-8258-44aa7b96d460": 18,
-}
+load_dotenv()
 
-# Día base para simular como si fuera hoy
-DIA_BASE = "2024-04-15"
+# --- Configuración ---
+CAPACIDAD_ESTIMADA = json.loads(os.getenv("CAPACIDAD_ESTIMADA", "{}"))
+DIA_BASE = os.getenv("DIA_BASE", "2025-06-22")
+fecha_objetivo = datetime.strptime(DIA_BASE, "%Y-%m-%d").date()
+CACHE_TICKETS: List[Dict] = []
 
-def obtener_ocupacion_actual_simulada() -> List[Dict]:
+PERFIL = os.getenv("AWS_PROFILE", "spa")
+REGION = os.getenv("AWS_REGION", "us-east-1")
+TABLE_NAME = os.getenv("TICKETS_TABLE", "TicketValidado-qnf3y7azksnd9jpkb8whgl0vmu-prod")
+
+# --- Sesión AWS ---
+session = Session(profile_name=PERFIL)
+dynamodb = session.resource("dynamodb", region_name=REGION)
+table = dynamodb.Table(TABLE_NAME)
+
+# 🔁 Escanea toda la tabla con filtro por fecha (paginado)
+def escanear_completo_por_fecha(fecha: str) -> List[Dict]:
+    items = []
+    kwargs = {
+        "FilterExpression": Attr("InitialDate").contains(fecha)
+    }
+
+    while True:
+        response = table.scan(**kwargs)
+        items.extend(response.get("Items", []))
+
+        if "LastEvaluatedKey" not in response:
+            break
+
+        kwargs["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+    return items
+
+# 🔄 Simulación de ocupación en tiempo real
+def obtener_ocupacion_actual() -> List[Dict]:
+    global CACHE_TICKETS
+
     now = datetime.now()
 
-    tickets = pd.read_csv("data/tickets.csv", parse_dates=["InitialDate", "EndDate"])
-    tickets = tickets.dropna(subset=["InitialDate", "EndDate", "parkingId"])
+    # Solo carga desde Dynamo una vez
+    if not CACHE_TICKETS:
+        print(f"🔎 Cargando desde Dynamo los tickets del día {DIA_BASE}")
+        CACHE_TICKETS = escanear_completo_por_fecha(DIA_BASE)
 
-    dia_base_obj = datetime.strptime(DIA_BASE, "%Y-%m-%d").date()
-    tickets = tickets[tickets["InitialDate"].dt.date == dia_base_obj]
+    if not CACHE_TICKETS:
+        print("❌ No se encontraron tickets para esa fecha.")
+        return []
 
-   # ⚠️ Quitar zona horaria UTC si existe
-    tickets["InitialDate"] = tickets["InitialDate"].dt.tz_localize(None)
-    tickets["EndDate"] = tickets["EndDate"].dt.tz_localize(None)
+    df = pd.DataFrame(CACHE_TICKETS)
+    df["InitialDate"] = pd.to_datetime(df["InitialDate"], errors="coerce").dt.tz_localize(None)
+    df["EndDate"] = pd.to_datetime(df["EndDate"], errors="coerce").dt.tz_localize(None)
+    df = df.dropna(subset=["InitialDate", "EndDate", "parkingId"])
 
-    tickets_activos = tickets[(tickets["InitialDate"] <= now) & (tickets["EndDate"] > now)]
+    df["hora_inicio"] = df["InitialDate"].dt.hour
+    resumen_horas = df.groupby("hora_inicio").size().reset_index(name="vehiculos")
+    print("📊 Vehículos por hora:")
+    print(resumen_horas)
+
+    # Simula el tiempo actual dentro del día objetivo
+    now_simulado = now.replace(
+        year=fecha_objetivo.year,
+        month=fecha_objetivo.month,
+        day=fecha_objetivo.day
+    )
+
+    tickets_activos = df[(df["InitialDate"] <= now_simulado) & (df["EndDate"] > now_simulado)]
 
     resultados = []
     for parking_id, capacidad in CAPACIDAD_ESTIMADA.items():
         ocupados = len(tickets_activos[tickets_activos["parkingId"] == parking_id])
         porcentaje = round((ocupados / capacidad) * 100) if capacidad > 0 else 0
 
-        if porcentaje < 50:
-            color = "verde"
-        elif porcentaje < 85:
-            color = "amarillo"
-        else:
-            color = "rojo"
+        color = (
+            "verde" if porcentaje < 50 else
+            "amarillo" if porcentaje < 85 else
+            "rojo"
+        )
 
         resultados.append({
             "parkingId": parking_id,
@@ -51,3 +97,4 @@ def obtener_ocupacion_actual_simulada() -> List[Dict]:
         })
 
     return resultados
+

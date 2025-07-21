@@ -1,4 +1,3 @@
-# app/servicios/analisis_horarios.py
 import pandas as pd
 
 def calcular_afluencia(path="data/tickets.csv"):
@@ -26,4 +25,24 @@ def calcular_afluencia(path="data/tickets.csv"):
 
 
     return df_afluencia.to_dict(orient="records")
+
+def preparar_datos_prophet(tickets_csv, estacionamiento_id=None):
+    df = pd.read_csv(tickets_csv)
+    df["fechaValidacion"] = pd.to_datetime(df["fechaValidacion"], errors="coerce")
+    df = df.dropna(subset=["fechaValidacion"])
+
+    if estacionamiento_id:
+        df = df[df["parkingId"] == estacionamiento_id]
+
+    df["hora"] = df["fechaValidacion"].dt.floor("H")
+
+    df_agrupado = df.groupby("hora").size().reset_index(name="y")
+    df_agrupado.rename(columns={"hora": "ds"}, inplace=True)
+
+    # ⚠️ Quitar zona horaria
+    df_agrupado["ds"] = df_agrupado["ds"].dt.tz_localize(None)
+
+    return df_agrupado
+
+
 

@@ -2,13 +2,33 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import joblib
 import numpy as np
-from .analisis_horarios import calcular_afluencia
+from app.servicios.analisis_horarios import calcular_afluencia
 from fastapi.middleware.cors import CORSMiddleware
 from app.servicios.preparar_dataset import preparar_dataset_facturas
 from app.servicios.preparar_clientes import obtener_datos_clientes  # 👈 Importa esta nueva función
-from app.servicios.ocupacion import obtener_ocupacion_actual_simulada
+from app.servicios.ocupacion import obtener_ocupacion_actual
+from app.servicios.parqueaderos import obtener_parqueaderos
+from app.servicios.prediccion_prophet import preparar_datos_prophet, predecir_afluencia_prophet
+from fastapi import APIRouter, Query, Body
+from app.servicios.dynamodb_service import escanear_tickets
+from app.servicios.prediccion_prophet import (
+    transformar_tickets_dynamodb_a_prophet,
+    predecir_afluencia_prophet
+)
+from typing import Optional
+from openai import OpenAI
+import os
+from dotenv import load_dotenv
 
+
+class ImagenRequest(BaseModel):
+    base64_img: str
+    prompt: str
+
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 app = FastAPI()
+router = APIRouter()
 
 # Habilitar CORS para que el frontend (Angular) acceda
 app.add_middleware(
@@ -79,7 +99,7 @@ def clientes_probables():
 
 @app.get("/ocupacion-real")
 def ocupacion_real():
-    return obtener_ocupacion_actual_simulada()
+    return obtener_ocupacion_actual()
 
 
 @app.get("/clientes-segmentados")
@@ -121,3 +141,70 @@ def clientes_segmentados():
     resumen = resumen.round(2)
 
     return resumen.to_dict(orient="records")
+
+@app.get("/parqueaderos")
+def parqueaderos():
+    return obtener_parqueaderos()
+
+@app.get("/afluencia-predicha-prophet")
+def afluencia_predicha_prophet(
+    parqueadero_id: Optional[str] = Query(None),
+    dias: int = 7
+):
+    items = escanear_tickets()
+    df = transformar_tickets_dynamodb_a_prophet(items, estacionamiento_id=parqueadero_id)
+
+    if df.empty:
+        return {"error": "No hay datos suficientes para ese parqueadero"}
+
+    prediccion = predecir_afluencia_prophet(df, dias_a_predecir=dias)
+    return prediccion
+
+@router.post("/interpretar-afluencia", tags=["IA"])
+def interpretar_afluencia(datos: list = Body(...)):
+    prompt = (
+        "Analiza los siguientes datos de afluencia horaria en un parqueadero. "
+        "Los datos están agrupados por hora y conteo de personas. "
+        "Devuelve insights útiles para mejorar la gestión del parqueadero.\n\n"
+        f"{datos}\n\n"
+        "Devuelve un resumen claro y útil para un dashboard."
+    )
+
+    try:
+        respuesta = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.4,
+            max_tokens=500
+        )
+        return {"interpretacion": respuesta.choices[0].message.content}
+    except Exception as e:
+        return {"error": str(e)}
+    
+app.include_router(router)
+
+@app.post("/analizar-imagen")
+def analizar_imagen(data: ImagenRequest):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": data.prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data.base64_img
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=800
+        )
+        return {"respuesta": response.choices[0].message.content}
+    except Exception as e:
+        return {"error": str(e)}
+

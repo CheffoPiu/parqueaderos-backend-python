@@ -1,11 +1,21 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from servicios.cargar_datos import cargar_datos
 from servicios.eda import eda
 
+app = FastAPI()
+
+# CORS para permitir Angular (localhost:4200)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:4200"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Cargar y procesar datos
 datos = cargar_datos()
 eda(datos)
 
-print("Clientes:", datos["clientes"].shape)
-print("Facturas:", datos["facturas"].shape)
-print("Tickets:", datos["tickets"].shape)
-print("Comercios:", datos["comercios"].shape)
-print("Estacionamientos:", datos["estacionamientos"].shape)
+# Tus endpoints irán aquí...

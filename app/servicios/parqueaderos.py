@@ -33,7 +33,8 @@ def obtener_parqueaderos():
             "lng": float(row["lng"]) if row.get("lng") not in [None, ""] else 0.0,
             "capacidad": int(row.get("capacidad", 0)),
             "libres": 0,
-            "color": "gray"
+            "color": "gray",
+            "horarioAtencion": row.get("horarioAtencion", ""),
         })
 
     return parqueaderos

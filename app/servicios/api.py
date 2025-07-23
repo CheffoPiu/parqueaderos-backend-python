@@ -20,6 +20,7 @@ from typing import Optional
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+from fastapi.responses import JSONResponse
 
 
 class ImagenRequest(BaseModel):
@@ -162,39 +163,59 @@ def afluencia_predicha_prophet(
     dias: int = 7,
     actualizar: bool = Query(False)
 ):
-    items = escanear_tickets(force_reload=actualizar)
-    print(f"Se trajeron {len(items)} tickets desde DynamoDB")
-    df = transformar_tickets_dynamodb_a_prophet(items, estacionamiento_id=parqueadero_id)
+    try:
+        items = escanear_tickets(force_reload=actualizar)
+        print(f"Se trajeron {len(items)} tickets desde DynamoDB")
+        df = transformar_tickets_dynamodb_a_prophet(items, estacionamiento_id=parqueadero_id)
 
-    # --- INICIA DIAGNÓSTICO ---
-    print("➡️  [Diagnóstico] Resumen estadístico de afluencia por hora:")
-    print(df["y"].describe())
-    print("➡️  Horas con y = 0:", (df["y"] == 0).sum())
-    print("➡️  Horas totales:", len(df))
-    print("➡️  Primeros datos:\n", df.head(10))
-    print("➡️  Últimos datos:\n", df.tail(10))
-    df['hora'] = df['ds'].dt.hour
-    df['dia_semana'] = df['ds'].dt.dayofweek  # 0=lunes, 6=domingo
-    print("➡️  Afluencia promedio por hora:")
-    print(df.groupby('hora')["y"].mean().round(2))
-    print("➡️  Afluencia promedio por día (0=Lunes):")
-    print(df.groupby('dia_semana')["y"].mean().round(2))
+        # --- INICIA DIAGNÓSTICO ---
+        print("➡️  [Diagnóstico] Resumen estadístico de afluencia por hora:")
+        print(df["y"].describe())
+        print("➡️  Horas con y = 0:", (df["y"] == 0).sum())
+        print("➡️  Horas totales:", len(df))
+        print("➡️  Primeros datos:\n", df.head(10))
+        print("➡️  Últimos datos:\n", df.tail(10))
+        df['hora'] = df['ds'].dt.hour
+        df['dia_semana'] = df['ds'].dt.dayofweek  # 0=lunes, 6=domingo
+        print("➡️  Afluencia promedio por hora:")
+        print(df.groupby('hora')["y"].mean().round(2))
+        print("➡️  Afluencia promedio por día (0=Lunes):")
+        print(df.groupby('dia_semana')["y"].mean().round(2))
 
-    if df.empty:
-        return {"error": "No hay datos suficientes para ese parqueadero"}
+        if df.empty:
+            return {
+                "prediccion": [],
+                "error": {"mae": None, "mape": None, "n": 0},
+                "mensaje": "No hay datos suficientes para ese parqueadero"
+            }
 
-    # --- NUEVO: Detección automática de horas activas ---
-    horas_activas = detectar_horas_activas(df, umbral=10, min_dias=0.2)
-    print(f"➡️  Horas activas detectadas: {horas_activas}")
+        # --- NUEVO: Detección automática de horas activas ---
+        horas_activas = detectar_horas_activas(df, umbral=10, min_dias=0.2)
+        print(f"➡️  Horas activas detectadas: {horas_activas}")
 
-    df_filtrado = df[df['ds'].dt.hour.isin(horas_activas)].copy()
+        df_filtrado = df[df['ds'].dt.hour.isin(horas_activas)].copy()
 
-    if df_filtrado.empty:
-        return {"error": "No hay datos suficientes en las horas activas para ese parqueadero"}
+        if df_filtrado.empty:
+            return {
+                "prediccion": [],
+                "error": {"mae": None, "mape": None, "n": 0},
+                "mensaje": "No hay datos suficientes en las horas activas para ese parqueadero"
+            }
 
-    # --- LLAMA A PROPHET SOLO CON HORAS ACTIVAS ---
-    prediccion = predecir_afluencia_prophet(df_filtrado, dias_a_predecir=dias)
-    return prediccion
+        # --- LLAMA A PROPHET SOLO CON HORAS ACTIVAS ---
+        prediccion = predecir_afluencia_prophet(df_filtrado, dias_a_predecir=dias)
+        return prediccion
+    
+    except Exception as e:
+        # Esto asegura que NUNCA devuelve un 500 sino siempre JSON con mensaje de error
+        return JSONResponse(
+            status_code=200,
+            content={
+                "prediccion": [],
+                "error": {"mae": None, "mape": None, "n": 0},
+                "mensaje": f"Error interno: {str(e)}"
+            }
+        )
 
 @router.post("/interpretar-afluencia", tags=["IA"])
 def interpretar_afluencia(datos: list = Body(...)):

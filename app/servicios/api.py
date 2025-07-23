@@ -13,7 +13,8 @@ from fastapi import APIRouter, Query, Body
 from app.servicios.dynamodb_service import escanear_tickets
 from app.servicios.prediccion_prophet import (
     transformar_tickets_dynamodb_a_prophet,
-    predecir_afluencia_prophet
+    predecir_afluencia_prophet,
+    detectar_horas_activas 
 )
 from typing import Optional
 from openai import OpenAI
@@ -60,8 +61,17 @@ def predecir(data: ClienteData):
 
 # NUEVO: Endpoint para afluencia por hora y día
 @app.get("/afluencia")
-def afluencia():
-    return calcular_afluencia()
+def afluencia(
+    fecha_inicio: str = Query(None),
+    fecha_fin: str = Query(None),
+    parqueadero_id: str = Query(None)
+):
+    return calcular_afluencia(
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+        parqueadero_id=parqueadero_id
+    )
+
 
 @app.get("/clientes-probables")
 def clientes_probables():
@@ -149,15 +159,41 @@ def parqueaderos():
 @app.get("/afluencia-predicha-prophet")
 def afluencia_predicha_prophet(
     parqueadero_id: Optional[str] = Query(None),
-    dias: int = 7
+    dias: int = 7,
+    actualizar: bool = Query(False)
 ):
-    items = escanear_tickets()
+    items = escanear_tickets(force_reload=actualizar)
+    print(f"Se trajeron {len(items)} tickets desde DynamoDB")
     df = transformar_tickets_dynamodb_a_prophet(items, estacionamiento_id=parqueadero_id)
+
+    # --- INICIA DIAGNÓSTICO ---
+    print("➡️  [Diagnóstico] Resumen estadístico de afluencia por hora:")
+    print(df["y"].describe())
+    print("➡️  Horas con y = 0:", (df["y"] == 0).sum())
+    print("➡️  Horas totales:", len(df))
+    print("➡️  Primeros datos:\n", df.head(10))
+    print("➡️  Últimos datos:\n", df.tail(10))
+    df['hora'] = df['ds'].dt.hour
+    df['dia_semana'] = df['ds'].dt.dayofweek  # 0=lunes, 6=domingo
+    print("➡️  Afluencia promedio por hora:")
+    print(df.groupby('hora')["y"].mean().round(2))
+    print("➡️  Afluencia promedio por día (0=Lunes):")
+    print(df.groupby('dia_semana')["y"].mean().round(2))
 
     if df.empty:
         return {"error": "No hay datos suficientes para ese parqueadero"}
 
-    prediccion = predecir_afluencia_prophet(df, dias_a_predecir=dias)
+    # --- NUEVO: Detección automática de horas activas ---
+    horas_activas = detectar_horas_activas(df, umbral=10, min_dias=0.2)
+    print(f"➡️  Horas activas detectadas: {horas_activas}")
+
+    df_filtrado = df[df['ds'].dt.hour.isin(horas_activas)].copy()
+
+    if df_filtrado.empty:
+        return {"error": "No hay datos suficientes en las horas activas para ese parqueadero"}
+
+    # --- LLAMA A PROPHET SOLO CON HORAS ACTIVAS ---
+    prediccion = predecir_afluencia_prophet(df_filtrado, dias_a_predecir=dias)
     return prediccion
 
 @router.post("/interpretar-afluencia", tags=["IA"])

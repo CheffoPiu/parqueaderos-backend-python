@@ -1,9 +1,10 @@
 import os
+import pandas as pd
 import boto3
-from boto3.dynamodb.conditions import Attr
 from boto3.session import Session
 from dotenv import load_dotenv
 
+# Cargar variables de entorno
 load_dotenv()
 
 PERFIL = os.getenv("AWS_PROFILE", "spa")
@@ -16,13 +17,35 @@ table = dynamodb.Table(TABLE_NAME)
 
 CACHE_TICKETS = []
 
-def escanear_tickets():
+def guardar_tickets_csv(items, archivo_csv="tickets_cache.csv"):
+    df = pd.DataFrame(items)
+    df.to_csv(archivo_csv, index=False)
+    print(f"✅ Tickets guardados en {archivo_csv}")
+
+def cargar_tickets_desde_csv(archivo_csv="tickets_cache.csv"):
+    df = pd.read_csv(archivo_csv)
+    items = df.to_dict(orient="records")
+    print(f"✅ Tickets cargados desde {archivo_csv}: {len(items)}")
+    return items
+
+def escanear_tickets(force_reload=False, archivo_csv="tickets_cache.csv"):
     global CACHE_TICKETS
-    if CACHE_TICKETS:
+    if not force_reload and os.path.exists(archivo_csv):
+        print("🔵 Cargando tickets desde CSV local...")
+        CACHE_TICKETS = cargar_tickets_desde_csv(archivo_csv)
         return CACHE_TICKETS
 
     print("🔄 Escaneando tickets desde DynamoDB...")
+    items = []
     response = table.scan()
-    items = response.get("Items", [])
+    items.extend(response.get("Items", []))
+
+    while 'LastEvaluatedKey' in response:
+        response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+        items.extend(response.get("Items", []))
+        print(f"  - Total acumulado: {len(items)}")
+
     CACHE_TICKETS = items
+    guardar_tickets_csv(items, archivo_csv)
+    print(f"✅ Total tickets escaneados: {len(items)}")
     return items

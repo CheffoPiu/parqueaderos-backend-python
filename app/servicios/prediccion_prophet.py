@@ -50,16 +50,22 @@ def predecir_afluencia_prophet(df, dias_a_predecir=7):
             "error": {"mae": None, "mape": None, "n": 0}
         }
 
+    # Detecta y filtra solo horas activas
+    horas_activas = detectar_horas_activas(df)
+    df = df[df['ds'].dt.hour.isin(horas_activas)].copy()
+
     modelo = Prophet()
     modelo.fit(df)
 
+    # Crea el future dataframe SOLO con horas activas
     future = modelo.make_future_dataframe(periods=dias_a_predecir * 24, freq='H')
+    future = future[future['ds'].dt.hour.isin(horas_activas)]  # <-- filtro clave
+
     forecast = modelo.predict(future)
 
     resultado = forecast[["ds", "yhat"]].copy()
     resultado["yhat"] = resultado["yhat"].clip(lower=0).round().astype(int)
 
-    # Solo comparar si hay solapamiento entre real y predicción
     df_real = df[df["ds"] >= resultado["ds"].min()]
     error = calcular_error_prediccion(df_real, resultado) if not df_real.empty else {
         "mae": None, "mape": None, "n": 0
@@ -85,3 +91,26 @@ def calcular_error_prediccion(real_df: pd.DataFrame, pred_df: pd.DataFrame):
         "mape": round(mape, 2),
         "n": len(comparacion)
     }
+
+def detectar_horas_activas(df, umbral=10, min_dias=0.2):
+    """
+    Detecta automáticamente las horas activas de un parqueadero.
+    - umbral: cuántos usuarios/hora mínimo para considerarla activa.
+    - min_dias: proporción mínima de días con actividad para considerarla.
+    """
+    if df.empty or 'ds' not in df.columns or 'y' not in df.columns:
+        return []
+
+    df = df.copy()
+    df['hora'] = df['ds'].dt.hour
+    df['fecha'] = df['ds'].dt.date
+
+    actividad_por_hora = (
+        df[df['y'] >= umbral]
+        .groupby('hora')['fecha']
+        .nunique()
+        .sort_index()
+    )
+    total_dias = df['fecha'].nunique()
+    horas_activas = actividad_por_hora[actividad_por_hora >= (min_dias * total_dias)].index.tolist()
+    return horas_activas

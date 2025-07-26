@@ -220,23 +220,33 @@ def afluencia_predicha_prophet(
 @router.post("/interpretar-afluencia", tags=["IA"])
 def interpretar_afluencia(datos: list = Body(...)):
     prompt = (
-        "Analiza los siguientes datos de afluencia horaria en un parqueadero. "
-        "Los datos están agrupados por hora y conteo de personas. "
-        "Devuelve insights útiles para mejorar la gestión del parqueadero.\n\n"
-        f"{datos}\n\n"
-        "Devuelve un resumen claro y útil para un dashboard."
+        "Analiza esta tabla de predicción de afluencia horaria por día en un parqueadero. "
+        "La tabla representa la cantidad estimada de personas que usarán el parqueadero en cada hora de cada día de la semana (siguientes 7 días). "
+        "Importante: **solo se muestran las horas en las que el parqueadero está operativo**. "
+        "No consideres franjas con afluencia cero como horas valle si están fuera del horario de atención.\n\n"
+        "Quiero que generes un resumen ejecutivo que incluya:\n"
+        "1. Horarios o días con mayor afluencia estimada (picos próximos).\n"
+        "2. Riesgo de sobreocupación según los valores estimados.\n"
+        "3. Recomendaciones para reforzar turnos operativos, seguridad o mantenimiento.\n"
+        "4. Sugerencias de promociones para horas de baja afluencia que sí están dentro del horario laboral.\n\n"
+        "Devuelve un análisis claro, corto, en viñetas, útil para un gerente que necesita tomar decisiones rápidamente. No incluyas explicaciones técnicas.\n\n"
+        f"Datos:\n{datos}"
     )
 
     try:
         respuesta = client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                {"role": "system", "content": "Eres un analista de datos experto en gestión de parqueaderos urbanos."},
+                {"role": "user", "content": prompt}
+            ],
             temperature=0.4,
-            max_tokens=500
+            max_tokens=3000
         )
         return {"interpretacion": respuesta.choices[0].message.content}
     except Exception as e:
         return {"error": str(e)}
+
     
 app.include_router(router)
 

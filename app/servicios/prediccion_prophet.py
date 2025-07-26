@@ -1,5 +1,6 @@
 import pandas as pd
 from prophet import Prophet
+from sklearn.metrics import confusion_matrix, classification_report
 
 # Transforma los tickets a un DataFrame para Prophet, filtrando por estacionamiento si se indica
 def transformar_tickets_dynamodb_a_prophet(items, estacionamiento_id=None):
@@ -90,13 +91,16 @@ def predecir_afluencia_prophet(df, dias_a_predecir=7):
 
     # Solo evalúa el error donde hay datos reales (periodo solapado)
     df_real = df[df["ds"] >= resultado["ds"].min()]
+    
     error = calcular_error_prediccion(df_real, resultado) if not df_real.empty else {
         "mae": None, "mape": None, "n": 0
     }
+    evaluacion_clasificacion = evaluar_clasificacion_ocupado(df_real, resultado, umbral=20) if not df_real.empty else {}
 
     return {
         "prediccion": resultado.to_dict(orient="records"),
-        "error": error
+        "error_regresion": error,
+        "evaluacion_clasificacion": evaluacion_clasificacion
     }
 
 
@@ -171,3 +175,23 @@ def detectar_horas_activas(df, umbral=10, min_dias=0.2):
     total_dias = df['fecha'].nunique()
     horas_activas = actividad_por_hora[actividad_por_hora >= (min_dias * total_dias)].index.tolist()
     return horas_activas
+
+def evaluar_clasificacion_ocupado(real_df, pred_df, umbral=20):
+    df = real_df.merge(pred_df, on="ds", how="inner")
+
+    df['real_ocupado'] = (df['y'] >= umbral).astype(int)
+    df['pred_ocupado'] = (df['yhat'] >= umbral).astype(int)
+
+    matriz = confusion_matrix(df['real_ocupado'], df['pred_ocupado'])
+    reporte = classification_report(df['real_ocupado'], df['pred_ocupado'], output_dict=True)
+
+    return {
+        "matriz_confusion": matriz.tolist(),  # [[TN, FP], [FN, TP]]
+        "reporte": {
+            "precision": round(reporte["1"]["precision"], 2),
+            "recall": round(reporte["1"]["recall"], 2),
+            "f1_score": round(reporte["1"]["f1-score"], 2),
+            "accuracy": round(reporte["accuracy"], 2)
+        },
+        "soporte": int(reporte["1"]["support"])
+    }
